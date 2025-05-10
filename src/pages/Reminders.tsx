@@ -8,6 +8,7 @@ import { format, addDays, isToday, isTomorrow, isFuture, isWithinInterval, addHo
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertCircle, Clock } from 'lucide-react';
 import { toast } from '@/components/ui/use-toast';
+import { useGoogleLogin } from '@react-oauth/google';
 
 type ScheduledDose = {
   medication: Medication;
@@ -65,6 +66,44 @@ export default function Reminders() {
   const [dueDoses, setDueDoses] = useState<ScheduledDose[]>([]);
   const [justTaken, setJustTaken] = useState<{ [key: string]: boolean }>({});
   const [doseLogs, setDoseLogs] = useState<any[]>([]);
+  const [googleToken, setGoogleToken] = useState<string | null>(null);
+
+  const login = useGoogleLogin({
+    scope: 'https://www.googleapis.com/auth/calendar.events',
+    onSuccess: tokenResponse => {
+      setGoogleToken(tokenResponse.access_token);
+      toast({ title: 'Google Login Success', description: 'You can now sync reminders to Google Calendar.' });
+    },
+    onError: () => {
+      toast({ title: 'Google Login Failed', description: 'Could not authenticate with Google.' });
+    }
+  });
+
+  const createCalendarEvent = async (dose: ScheduledDose) => {
+    if (!googleToken) {
+      toast({ title: 'Not signed in', description: 'Please sign in with Google first.' });
+      return;
+    }
+    const event = {
+      summary: `Take Medication: ${dose.medication.name}`,
+      description: `MedTrack reminder to take your medication: ${dose.medication.dose}`,
+      start: { dateTime: dose.scheduledTime.toISOString() },
+      end: { dateTime: new Date(dose.scheduledTime.getTime() + 15 * 60000).toISOString() },
+    };
+    const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${googleToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(event),
+    });
+    if (response.ok) {
+      toast({ title: 'Synced!', description: 'Event added to Google Calendar.' });
+    } else {
+      toast({ title: 'Failed to sync', description: 'Could not add event to Google Calendar.' });
+    }
+  };
 
   useEffect(() => {
     if (user) {
@@ -224,6 +263,14 @@ export default function Reminders() {
     <Layout>
       <MedicalQuoteBanner />
       <h1 className="text-3xl font-extrabold text-blue-900 mb-8 tracking-tight text-center">Reminders</h1>
+      <div className="flex justify-center mb-6">
+        <button
+          className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded shadow"
+          onClick={() => login()}
+        >
+          {googleToken ? 'Google Connected' : 'Sign in with Google (for Calendar)'}
+        </button>
+      </div>
       <div className="mb-6">
         <p className="text-gray-600">Upcoming medication doses</p>
       </div>
@@ -315,10 +362,19 @@ export default function Reminders() {
                                 <span>{format(dose.scheduledTime, 'h:mm a')}</span>
                               </div>
                             </div>
-                            <div className={`px-2 py-1 text-xs rounded-full ${
-                              dose.isDue ? 'bg-yellow-100 text-yellow-800' : 'bg-blue-100 text-blue-800'
-                            }`}>
-                              {dose.isDue ? 'Due Now' : 'Upcoming'}
+                            <div className="flex flex-col items-end gap-2">
+                              <button
+                                className="px-2 py-1 text-xs rounded bg-green-500 text-white hover:bg-green-600"
+                                onClick={() => createCalendarEvent(dose)}
+                                disabled={!googleToken}
+                              >
+                                Sync to Google Calendar
+                              </button>
+                              <div className={`px-2 py-1 text-xs rounded-full ${
+                                dose.isDue ? 'bg-yellow-100 text-yellow-800' : 'bg-blue-100 text-blue-800'
+                              }`}>
+                                {dose.isDue ? 'Due Now' : 'Upcoming'}
+                              </div>
                             </div>
                           </div>
                         </div>
